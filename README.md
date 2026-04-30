@@ -1,4 +1,4 @@
-# MSFFAT: Multi-Scale Spatiotemporal Feature Fusion with Attention Transfer
+# Next-Gen Website Fingerprinting: Sample-Efficient Modeling and Attention Transfer for Robust Performance under Concept Drift
 
 This repository contains a cleaned implementation of MSFFAT for website fingerprinting research.  It was reconstructed from the available project code and organized for anonymous review release.
 
