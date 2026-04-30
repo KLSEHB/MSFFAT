@@ -1,0 +1,5 @@
+{
+  "data_root": "/path/to/data",
+  "notes": "Set this path with --data-root or MSFFAT_DATA_ROOT. See docs/DATA.md for the expected layout."
+}
+
