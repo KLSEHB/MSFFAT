@@ -1,4 +1,4 @@
-# Next-Gen Website Fingerprinting: Sample-Efficient Modeling and Attention Transfer for Robust Performance under Concept Drift
+# MSFFAT: Multi-Scale Spatiotemporal Feature Fusion with Attention Transfer
 
 This repository contains a cleaned implementation of MSFFAT for website fingerprinting research.  It was reconstructed from the available project code and organized for anonymous review release.
 
@@ -198,9 +198,18 @@ python scripts/run_experiments.py --data-root /path/to/data --dry-run
 
 Use `--execute` only after verifying paths, GPU availability, and storage.
 
-## Important Reproducibility Notes
+## Dataset Provenance and Downloads
 
-- The raw datasets are not redistributed here.
+The raw datasets are not redistributed in this repository. Obtain them from the original authors or the public mirrors below, and arrange them according to [docs/DATA.md](docs/DATA.md).
 
-See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for details.
+| Dataset used in this project | Source paper | Public repository / data source |
+| --- | --- | --- |
+| DF-CW and DF-OW | [Deep Fingerprinting: Undermining Website Fingerprinting Defenses with Deep Learning (CCS 2018)](https://doi.org/10.1145/3243734.3243768) | [deep-fingerprinting/df](https://github.com/deep-fingerprinting/df) |
+| AWF-CW100/200/500/900 and AWF-Time (3d/10d/14d/28d/42d) | [Automated Website Fingerprinting through Deep Learning (NDSS 2018)](https://www.ndss-symposium.org/ndss-paper/automated-website-fingerprinting-through-deep-learning/) | [DistriNet/DLWF](https://github.com/DistriNet/DLWF) |
+| WTF-PAD defended traffic | [WTF-PAD: Toward an Efficient Website Fingerprinting Defense for Tor](https://arxiv.org/abs/1512.00524); the pickle-form evaluation dataset was released with [Deep Fingerprinting](https://doi.org/10.1145/3243734.3243768) | [deep-fingerprinting/df](https://github.com/deep-fingerprinting/df) |
+| Walkie-Talkie defended traffic | [Walkie-Talkie: An Efficient Defense Against Passive Website Fingerprinting Attacks (USENIX Security 2017)](https://www.usenix.org/conference/usenixsecurity17/technical-sessions/presentation/wang-tao); the pickle-form evaluation dataset was released with Deep Fingerprinting | [deep-fingerprinting/df](https://github.com/deep-fingerprinting/df) |
+| Front defended traffic | [Zero-delay Lightweight Defenses against Website Fingerprinting (USENIX Security 2020)](https://www.usenix.org/conference/usenixsecurity20/presentation/gong) | [FIND-Lab/Website-Fingerprinting-Library](https://github.com/FIND-Lab/Website-Fingerprinting-Library) and its [Zenodo dataset release](https://zenodo.org/records/13732130) |
+| TrafficSliver defended traffic | [TrafficSliver: Fighting Website Fingerprinting Attacks with Traffic Splitting (CCS 2020)](https://doi.org/10.1145/3372297.3423351) | [FIND-Lab/Website-Fingerprinting-Library](https://github.com/FIND-Lab/Website-Fingerprinting-Library) and its [Zenodo dataset release](https://zenodo.org/records/13732130) |
+| ARES open-world 2/3/4/5-tab traffic | [Robust Multi-tab Website Fingerprinting Attacks in the Wild (IEEE S&P 2023)](https://doi.org/10.1109/SP46215.2023.10179464) | [Xinhao-Deng/Multitab-WF-Datasets](https://github.com/Xinhao-Deng/Multitab-WF-Datasets) |
 
+The [Website-Fingerprinting-Library dataset release](https://zenodo.org/records/13732130) also provides a convenient unified mirror for several single-tab and defended datasets. Users should still cite the original paper associated with each dataset or defense.
