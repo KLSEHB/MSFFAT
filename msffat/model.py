@@ -28,7 +28,9 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.models import Model
 
 
-def channel_attention(inputs, ratio: int = 16, name: str = "channel_attention"):
+def channel_attention(
+    inputs, ratio: int = 16, name: str = "channel_attention", activation: str = "hard_sigmoid"
+):
     channels = int(inputs.shape[-1])
     hidden = max(channels // ratio, 1)
 
@@ -53,7 +55,7 @@ def channel_attention(inputs, ratio: int = 16, name: str = "channel_attention"):
     max_pool = shared_dense_2(shared_dense_1(max_pool))
 
     weights = Add(name=f"{name}_add")([avg_pool, max_pool])
-    weights = Activation("hard_sigmoid", name=f"{name}_weights")(weights)
+    weights = Activation(activation, name=f"{name}_weights")(weights)
     return Multiply(name=f"{name}_multiply")([inputs, weights])
 
 
@@ -102,12 +104,20 @@ def msf_branch(inputs, dropout: float = 0.2, name: str = "msf"):
     return x
 
 
-def ltf_residual_block(x, filters: int, dilation_pair, stage: int, block: int):
+def ltf_residual_block(
+    x,
+    filters: int,
+    dilation_pair,
+    stage: int,
+    block: int,
+    stride: int = 1,
+):
     name = f"ltf_s{stage}_b{block}"
     y = Conv1D(
         filters,
         5,
         padding="causal",
+        strides=stride,
         dilation_rate=dilation_pair[0],
         use_bias=False,
         kernel_initializer="he_normal",
@@ -127,8 +137,16 @@ def ltf_residual_block(x, filters: int, dilation_pair, stage: int, block: int):
     )(y)
     y = BatchNormalization(epsilon=1e-5, name=f"{name}_bn2")(y)
 
-    if int(x.shape[-1]) != filters:
-        shortcut = Conv1D(filters, 1, use_bias=False, name=f"{name}_shortcut_conv")(x)
+    # The recovered TensorFlow implementation projects every first block in a
+    # stage, including stage 0 where the channel count is unchanged.
+    if block == 0:
+        shortcut = Conv1D(
+            filters,
+            1,
+            strides=stride,
+            use_bias=False,
+            name=f"{name}_shortcut_conv",
+        )(x)
         shortcut = BatchNormalization(epsilon=1e-5, name=f"{name}_shortcut_bn")(shortcut)
     else:
         shortcut = x
@@ -142,7 +160,10 @@ def ltf_branch(inputs, name: str = "ltf"):
     x = inputs
     filters = 64
     for stage in range(4):
-        x = ltf_residual_block(x, filters, (1, 2), stage, 0)
+        # Match ../WF/MSFFAT.py: stages 1 and 2 downsample in the first
+        # residual convolution; stages 0 and 3 keep stride 1.
+        stride = 2 if stage in {1, 2} else 1
+        x = ltf_residual_block(x, filters, (1, 2), stage, 0, stride=stride)
         x = ltf_residual_block(x, filters, (4, 8), stage, 1)
         x = MaxPooling1D(pool_size=4, strides=2, name=f"{name}_s{stage}_pool")(x)
         filters *= 2
@@ -173,6 +194,7 @@ def build_msffat(
     mode: str = "single",
     msf_dropout: float = 0.2,
     head_dropout: float = 0.5,
+    attention_activation: str = "hard_sigmoid",
 ) -> Model:
     """Build MSFFAT.
 
@@ -190,9 +212,10 @@ def build_msffat(
     x = surface_downsample(inputs)
     ms_features = msf_branch(x, dropout=msf_dropout)
     lt_features = ltf_branch(x)
-    ms_features, lt_features = TemporalCropToMatch(name="align_temporal")([ms_features, lt_features])
     fused = Concatenate(axis=-1, name="feature_fusion_concat")([ms_features, lt_features])
-    fused = channel_attention(fused, ratio=16, name="fusion_attention")
+    fused = channel_attention(
+        fused, ratio=16, name="fusion_attention", activation=attention_activation
+    )
 
     x = Flatten(name="head_flatten")(fused)
     x = Dense(512, name="head_dense1")(x)
@@ -217,4 +240,11 @@ def set_attention_only_trainable(model: Model, keyword: str = "attention") -> Mo
     """
     for layer in model.layers:
         layer.trainable = keyword in layer.name
+    return model
+
+
+def set_attention_and_output_trainable(model: Model, keyword: str = "attention") -> Model:
+    """Freeze the backbone; update attention and the final softmax classifier."""
+    for layer in model.layers:
+        layer.trainable = keyword in layer.name or layer.name == "single_label_output"
     return model

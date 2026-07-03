@@ -1,6 +1,12 @@
 # MSFFAT: Multi-Scale Spatiotemporal Feature Fusion with Attention Transfer
 
-This repository contains a cleaned implementation of MSFFAT for website fingerprinting research.  It was reconstructed from the available project code and organized for anonymous review release.
+> **Repository update.** This revision adds stateful AWF-Time deployment,
+> aggregate probe-accuracy drift detection, localized-drift stress testing,
+> WFL closed/open-world few-shot evaluation, baseline evaluation, and GPU
+> inference-throughput experiments.
+
+This repository provides an implementation of MSFFAT and reproducible entry
+points for website-fingerprinting experiments.
 
 The code supports MSFFAT-only experiments:
 
@@ -8,12 +14,16 @@ The code supports MSFFAT-only experiments:
 - best-effort open-world training/evaluation;
 - large monitored-set training on AWF-CW subsets;
 - temporal concept-drift evaluation;
-- calibration-based drift monitoring;
-- attention-transfer fine-tuning;
+- stateful aggregate probe-accuracy drift monitoring;
+- attention-plus-classifier-head adaptation;
+- localized-drift stress testing;
+- GPU inference latency, throughput, and feasible-batch-size benchmarking;
 - sequence-level JS divergence analysis;
 - multi-tab concurrent traffic with a sigmoid multi-label head.
 
-Baseline implementations are **not** bundled here.  Baseline results in the paper should be treated as either prior released results or separately reproduced experiments.
+Third-party baseline repositories are **not** bundled here. Lightweight AWF
+variants and evaluation wrappers used by the new experiments are included;
+external methods must still be obtained from their original releases.
 
 ## Repository Layout
 
@@ -21,6 +31,7 @@ Baseline implementations are **not** bundled here.  Baseline results in the pape
 .
 ├── msffat/                  # MSFFAT model, data loaders, metrics, maintenance helpers
 ├── scripts/                 # command-line entry points
+├── tests/                   # detector/splitting regression tests
 ├── configs/                 # example dataset/config files
 ├── docs/                    # data and experiment documentation
 ├── requirements.txt         # Python dependencies
@@ -30,13 +41,19 @@ Baseline implementations are **not** bundled here.  Baseline results in the pape
 
 ## Installation
 
-Python 3.9+ is recommended.
+Python 3.10+ is recommended.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
+```
+
+Install the optional PyTorch dependency for throughput comparisons:
+
+```bash
+pip install -e ".[benchmarks]"
 ```
 
 On Windows PowerShell:
@@ -78,6 +95,41 @@ Print a model summary:
 python scripts/model_summary.py --classes 95 --length 5000 --mode single
 ```
 
+## Inference Throughput
+
+Measure MSFFAT peak throughput and maximum feasible batch size with synthetic
+inputs on the current GPU:
+
+```bash
+python scripts/benchmark_a40_throughput.py \
+  --method MSFFAT \
+  --msffat-backend tensorflow \
+  --seq-len 5000 --num-classes 100 \
+  --start-batch 1 --max-batch 65536 \
+  --binary-search \
+  --output results/gpu_throughput.csv
+```
+
+External baselines are loaded from a local Website-Fingerprinting-Library
+checkout supplied explicitly:
+
+```bash
+python scripts/benchmark_a40_throughput.py \
+  --method DF \
+  --baseline-root /path/to/Website-Fingerprinting-Library \
+  --output results/gpu_throughput.csv
+```
+
+The unified Table-10-style benchmark reports batch-1 latency, batch-128
+throughput, peak stable throughput, parameter count, and GPU model:
+
+```bash
+python scripts/benchmark_table10_torch.py \
+  --method AWF-CNN --classes 100 \
+  --wfl-root /path/to/Website-Fingerprinting-Library \
+  --output results/table10_throughput.csv
+```
+
 ## Main Commands
 
 Run commands from the repository root.
@@ -95,6 +147,18 @@ python scripts/train_single.py \
 
 Repeat `--samples` with `5`, `10`, `20`, and `50`.
 
+For Website-Fingerprinting-Library closed-world splits:
+
+```bash
+python scripts/prepare_wfl_cw.py \
+  --dataset-dir /path/to/WFL/CW \
+  --output-dir /path/to/prepared-cw
+python scripts/run_cw_fewshot.py \
+  --prepared-root /path/to/prepared-cw \
+  --output-root results/wfl-cw \
+  --require-gpu
+```
+
 ### Open World
 
 ```bash
@@ -106,6 +170,20 @@ python scripts/train_open_world.py \
 ```
 
 The recovered legacy code did not contain a fully verified open-world decision protocol.  This script is a clean training/evaluation entry point; verify `--classes` and label encoding against your local dataset.
+
+The reproducible WFL 95+1 protocol is implemented separately:
+
+```bash
+python scripts/prepare_wfl_ow.py \
+  --dataset-dir /path/to/WFL/OW \
+  --output-dir /path/to/prepared-ow \
+  --unmonitored-shots -1
+python scripts/train_open_world_kplus1.py \
+  --prepared-root /path/to/prepared-ow \
+  --samples 5 \
+  --output-dir results/wfl-ow/5shot \
+  --require-gpu
+```
 
 ### Large Monitored Sets
 
@@ -142,31 +220,44 @@ Legacy suffix mapping:
 - `4w` = 28 days
 - `6w` = 42 days
 
-### Attention Transfer
+### Stateful Deployment and Attention Transfer
 
 ```bash
-python scripts/finetune_atf.py \
+python scripts/simulate_awf_time_deployment.py \
   --data-root /path/to/data \
-  --model models/msffat_awf_cw200.hdf5 \
-  --suffix 6w \
-  --traces 2 \
-  --classes 200 \
-  --output models/msffat_awf_cw200_6w_atf.hdf5
+  --output-root results/awf-time-deployment \
+  --resume-model models/day0.keras \
+  --resume-from-epoch 41 --resume-epochs 0 \
+  --n-probe 5 --m-refresh 4 \
+  --detector-mode probe_only \
+  --detector-probe-drop-pp 2 \
+  --fixed-k-pp 2 \
+  --atf-train-scope attention_head \
+  --atf-deterministic-backbone \
+  --skip-tuning
 ```
 
-### Calibration-Based Monitor plus Optional ATF
+The final detector compares aggregate probe accuracy with the current reference
+accuracy and triggers only when the drop is strictly greater than the configured
+percentage-point threshold. The held-out remainder set is used only for Oracle
+evaluation. Days 3, 10, 14, 28, and 42 are processed statefully.
+
+### Localized-Drift Stress Test
 
 ```bash
-python scripts/monitor_and_adapt.py \
+python scripts/localized_drift_stress_test.py \
   --data-root /path/to/data \
-  --model models/msffat_awf_cw200.hdf5 \
-  --suffix 6w \
-  --a-base 0.9992 \
-  --refresh-traces 2 \
-  --output models/msffat_awf_cw200_6w_monitor_atf.hdf5
+  --model models/day0.keras \
+  --split-root results/awf-time-deployment \
+  --cohort-json results/awf-time-deployment/cohort.json \
+  --output-root results/localized-drift \
+  --seed 2024 --threshold-pp 2 \
+  --require-gpu
 ```
 
-This implements the deployment-oriented trigger policy.  It should not be confused with the paper's adaptation-effect table, where ATF is applied at each interval to isolate the adaptation outcome.
+This constructs nested 5%, 20%, and 50% site-level Day-42 replacements over a
+Day-3 background. It reports aggregate, drifted-site, and stable-site drops and
+does not execute ATF.
 
 ### Sequence-Level JS Divergence
 

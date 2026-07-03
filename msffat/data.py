@@ -37,7 +37,7 @@ def pad_or_truncate(sequences, maxlen: int = 5000, dtype="float32") -> np.ndarra
 
 
 def add_channel(x: np.ndarray) -> np.ndarray:
-    return x.astype("float32")[:, :, np.newaxis]
+    return np.asarray(x, dtype="float32")[:, :, np.newaxis]
 
 
 def sample_per_label(x: np.ndarray, y: np.ndarray, samples: Optional[int], seed: int = 42):
@@ -237,3 +237,42 @@ def load_ares_ktab(data_root: Optional[str] = None, k: int = 2) -> ArraySplit:
     valid.close()
     test.close()
     return out
+
+
+def load_prepared_wfl_cw(data_root: Optional[str] = None, samples: int = 5) -> ArraySplit:
+    """Load a prepared Website-Fingerprinting-Library CW few-shot split.
+
+    The cache is produced by ``scripts/prepare_wfl_cw.py``. Arrays are opened
+    as memory maps so validation and test data do not need to be duplicated in
+    host memory before Keras consumes them.
+    """
+    root = resolve_data_root(data_root)
+    required = {
+        "x_train": root / f"train_{samples}_X.npy",
+        "y_train": root / f"train_{samples}_y.npy",
+        "x_valid": root / "valid_X.npy",
+        "y_valid": root / "valid_y.npy",
+        "x_test": root / "test_X.npy",
+        "y_test": root / "test_y.npy",
+    }
+    missing = [str(path) for path in required.values() if not path.exists()]
+    if missing:
+        raise FileNotFoundError("Missing prepared WFL-CW files: " + ", ".join(missing))
+    return tuple(np.load(required[name], mmap_mode="r") for name in required)  # type: ignore[return-value]
+
+
+def load_prepared_wfl_ow(data_root: Optional[str] = None, samples: int = 5) -> ArraySplit:
+    """Load a prepared WFL K+1 open-world few-shot split."""
+    root = resolve_data_root(data_root)
+    required = {
+        "x_train": root / f"train_{samples}_X.npy",
+        "y_train": root / f"train_{samples}_y.npy",
+        "x_valid": root / "valid_X.npy",
+        "y_valid": root / "valid_y.npy",
+        "x_test": root / "test_X.npy",
+        "y_test": root / "test_y.npy",
+    }
+    missing = [str(path) for path in required.values() if not path.exists()]
+    if missing:
+        raise FileNotFoundError("Missing prepared WFL-OW files: " + ", ".join(missing))
+    return tuple(np.load(required[name], mmap_mode="r") for name in required)  # type: ignore[return-value]

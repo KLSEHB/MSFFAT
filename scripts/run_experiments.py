@@ -43,15 +43,23 @@ def build_commands(data_root: str):
             "--suffix", suffix,
             "--classes", 200,
         ])
-        commands.append([
-            "python", "scripts/finetune_atf.py",
-            "--data-root", data_root,
-            "--model", "models/msffat_awf_cw200.hdf5",
-            "--suffix", suffix,
-            "--traces", 2,
-            "--classes", 200,
-            "--output", f"models/msffat_awf_cw200_{suffix}_atf.hdf5",
-        ])
+
+    commands.append([
+        "python", "scripts/simulate_awf_time_deployment.py",
+        "--data-root", data_root,
+        "--output-root", "results/awf-time-deployment",
+        "--resume-model", "models/day0.keras",
+        "--resume-from-epoch", 0,
+        "--resume-epochs", 0,
+        "--n-probe", 5,
+        "--m-refresh", 4,
+        "--detector-mode", "probe_only",
+        "--detector-probe-drop-pp", 2,
+        "--fixed-k-pp", 2,
+        "--atf-train-scope", "attention_head",
+        "--atf-deterministic-backbone",
+        "--skip-tuning",
+    ])
 
     for tabs in [2, 3, 4, 5]:
         commands.append([
