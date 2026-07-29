@@ -1,9 +1,7 @@
-# MSFFAT: Multi-Scale Spatiotemporal Feature Fusion with Attention Transfer
+# Next-Gen Website Fingerprinting: Sample-Efficient Modeling and Attention Transfer for Robust Performance under Concept Drift
 
-> **Repository update.** This revision adds stateful AWF-Time deployment,
-> aggregate probe-accuracy drift detection, localized-drift stress testing,
-> WFL closed/open-world few-shot evaluation, baseline evaluation, and GPU
-> inference-throughput experiments.
+Official implementation of **MSFFAT** (Multi-Scale Spatiotemporal Feature Fusion
+with Attention Transfer).
 
 This repository provides an implementation of MSFFAT and reproducible entry
 points for website-fingerprinting experiments.
@@ -22,7 +20,7 @@ The code supports MSFFAT-only experiments:
 - multi-tab concurrent traffic with a sigmoid multi-label head.
 
 Third-party baseline repositories are **not** bundled here. Lightweight AWF
-variants and evaluation wrappers used by the new experiments are included;
+variants and evaluation wrappers used by these experiments are included;
 external methods must still be obtained from their original releases.
 
 ## Repository Layout
