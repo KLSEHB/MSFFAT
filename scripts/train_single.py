@@ -16,6 +16,7 @@ from tensorflow.keras.utils import to_categorical
 
 from msffat.data import add_channel, load_awf_cw, load_df_closed_world, load_prepared_wfl_cw
 from msffat.model import build_msffat
+from msffat.training import initial_callbacks, restore_selection, write_training_record, validate_class_labels
 
 
 def parse_args():
@@ -28,6 +29,8 @@ def parse_args():
     parser.add_argument("--awf-traces", type=int, default=100)
     parser.add_argument("--length", type=int, default=5000)
     parser.add_argument("--classes", type=int, required=True)
+    parser.add_argument("--variant", choices=["full", "ltf_only", "msf_only"], default="full")
+    parser.add_argument("--fusion", choices=["proposed", "independent", "standard", "concat"], default="proposed")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--output", default="models/msffat_single.hdf5")
@@ -48,22 +51,28 @@ def main():
         raise RuntimeError("--require-gpu was set, but TensorFlow found no GPU")
 
     if args.dataset == "df-cw":
-        splits = load_df_closed_world(args.data_root, defense="NoDef", samples=args.samples)
+        splits = load_df_closed_world(args.data_root, defense="NoDef", samples=args.samples, seed=args.seed, maxlen=args.length)
     elif args.dataset == "df-defense":
-        splits = load_df_closed_world(args.data_root, defense=args.defense, samples=args.samples)
+        splits = load_df_closed_world(args.data_root, defense=args.defense, samples=args.samples, seed=args.seed, maxlen=args.length)
     elif args.dataset == "awf-cw":
-        splits = load_awf_cw(args.data_root, part=args.awf_part, traces=args.awf_traces, maxlen=args.length)
+        splits = load_awf_cw(args.data_root, part=args.awf_part, traces=args.awf_traces, maxlen=args.length, seed=args.seed)
     else:
         if args.samples is None:
             raise ValueError("--samples is required for --dataset wfl-cw")
         splits = load_prepared_wfl_cw(args.data_root, samples=args.samples)
 
     x_train, y_train, x_valid, y_valid, x_test, y_test = splits
+    if any(x.ndim != 2 or x.shape[1] != args.length for x in (x_train,x_valid,x_test)):
+        raise ValueError("Prepared data length differs from the requested model input length")
+    validate_class_labels((y_train, y_valid, y_test), args.classes)
+    if args.samples is not None and not np.array_equal(np.bincount(y_train.astype(int),minlength=args.classes),np.full(args.classes,args.samples)):
+        raise ValueError("Training data do not match the declared per-class shot budget")
+    raw_splits = splits
     y_train = to_categorical(y_train, args.classes)
     y_valid = to_categorical(y_valid, args.classes)
     y_test_cat = to_categorical(y_test, args.classes)
 
-    model = build_msffat(input_shape=(args.length, 1), num_classes=args.classes, mode="single")
+    model = build_msffat(input_shape=(args.length, 1), num_classes=args.classes, mode="single", variant=args.variant, fusion=args.fusion)
     model.compile(
         optimizer="adam",
         loss="categorical_crossentropy",
@@ -72,24 +81,7 @@ def main():
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = output_path.with_suffix(".best_val_loss.weights.h5")
-    callbacks = [
-        ReduceLROnPlateau(monitor="val_accuracy", factor=np.sqrt(0.1), patience=5, min_lr=1e-5, verbose=1),
-        EarlyStopping(
-            monitor="val_accuracy",
-            patience=10,
-            restore_best_weights=True,
-            start_from_epoch=args.early_stopping_start_epoch,
-        ),
-        ModelCheckpoint(
-            checkpoint_path,
-            monitor="val_loss",
-            save_best_only=True,
-            save_weights_only=True,
-            mode="min",
-            verbose=1,
-        ),
-    ]
+    checkpoint_path, callbacks = initial_callbacks(output_path, start_epoch=args.early_stopping_start_epoch)
     started = time.time()
     history = model.fit(
         add_channel(x_train),
@@ -100,11 +92,12 @@ def main():
         callbacks=callbacks,
         verbose=1,
     )
+    selection = restore_selection(model, checkpoint_path, history)
     score = model.evaluate(add_channel(x_test), y_test_cat, verbose=1)
     # EarlyStopping restores the best validation-accuracy weights. Persist that
     # exact in-memory model rather than leaving a val-loss checkpoint behind.
     model.save(args.output)
-    best_epoch = int(np.argmax(history.history["val_accuracy"]) + 1)
+    best_epoch = selection["best_epoch"]
     result = {
         "status": "complete",
         "dataset": args.dataset,
@@ -118,6 +111,8 @@ def main():
         "runtime_seconds": float(time.time() - started),
         "model": str(Path(args.output).resolve()),
     }
+    write_training_record(args.output, config=args, selection=selection, splits=raw_splits,
+                          metrics={"test_loss": float(score[0]), "test_accuracy": float(score[1])}, model=model)
     if args.history_output:
         history_path = Path(args.history_output)
         history_path.parent.mkdir(parents=True, exist_ok=True)

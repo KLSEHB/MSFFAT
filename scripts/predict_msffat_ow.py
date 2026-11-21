@@ -10,6 +10,8 @@ import numpy as np
 import tensorflow as tf
 
 from msffat.data import add_channel
+from msffat.model import validate_aligned_model
+from msffat.baseline_adapters import sha256
 
 
 def parse_args():
@@ -34,11 +36,16 @@ def main():
     x_test = np.load(root / "test_X.npy", mmap_mode="r")
     y_test = np.load(root / "test_y.npy")
     model = tf.keras.models.load_model(args.model, compile=False)
+    identity = validate_aligned_model(model)
+    if identity["classes"] != 96 or identity["mode"] != "single" or any(x.shape[1] != identity["length"] for x in (x_valid,x_test)):
+        raise ValueError("Expected the aligned 95+1 model and matching input length")
     valid_probs = model.predict(add_channel(x_valid), batch_size=args.batch_size, verbose=1).astype("float32")
     valid_preds = np.argmax(valid_probs, axis=1).astype("int64")
     probs = model.predict(add_channel(x_test), batch_size=args.batch_size, verbose=1).astype("float32")
     preds = np.argmax(probs, axis=1).astype("int64")
     out = Path(args.output_root).resolve() / "MSFFAT"
+    if out.exists() and any(out.iterdir()):
+        raise FileExistsError("Use a fresh probability output root")
     out.mkdir(parents=True, exist_ok=True)
     np.save(out / "valid_probs.npy", valid_probs)
     np.save(out / "valid_y.npy", y_valid.astype("int64"))
@@ -48,6 +55,7 @@ def main():
     np.save(out / "test_pred.npy", preds)
     metadata = {
         "method": "MSFFAT",
+        "method_version":"MSFFAT-v3","model_identity":identity,"model_sha256":sha256(args.model),
         "model": str(Path(args.model).resolve()),
         "prepared_root": str(root.resolve()),
         "valid_size": int(len(y_valid)),

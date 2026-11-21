@@ -17,8 +17,9 @@ import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.keras.utils import to_categorical
 
-from msffat.data import add_channel, load_df_open_world_evaluation, load_df_open_world_training, sample_per_label
+from msffat.data import add_channel, load_df_open_world_evaluation, load_df_open_world_training, sample_per_label, pad_or_truncate
 from msffat.model import build_msffat
+from msffat.training import initial_callbacks, restore_selection, write_training_record, validate_class_labels
 
 
 def parse_args():
@@ -40,21 +41,19 @@ def main():
     np.random.seed(args.seed)
     tf.random.set_seed(args.seed)
 
-    x_train, y_train, x_valid, y_valid = load_df_open_world_training(args.data_root)
+    x_train, y_train, x_valid, y_valid = load_df_open_world_training(args.data_root,maxlen=args.length)
     x_train, y_train = sample_per_label(x_train, y_train, args.samples, seed=args.seed)
     x_mon, y_mon, x_unmon, y_unmon = load_df_open_world_evaluation(args.data_root)
     x_test = np.concatenate([x_mon, x_unmon], axis=0)
     y_test = np.concatenate([y_mon, y_unmon], axis=0)
+    x_train, x_valid, x_test = [pad_or_truncate(x, args.length) for x in (x_train,x_valid,x_test)]
 
     model = build_msffat(input_shape=(args.length, 1), num_classes=args.classes, mode="single")
     model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    callbacks = [
-        ReduceLROnPlateau(monitor="val_accuracy", factor=np.sqrt(0.1), patience=5, min_lr=1e-5, verbose=1),
-        EarlyStopping(monitor="val_accuracy", patience=10, restore_best_weights=True),
-        ModelCheckpoint(args.output, monitor="val_loss", save_best_only=True, mode="min", verbose=1),
-    ]
-    model.fit(
+    checkpoint_path, callbacks = initial_callbacks(args.output)
+    validate_class_labels((y_train, y_valid, y_test), args.classes)
+    history = model.fit(
         add_channel(x_train),
         to_categorical(y_train, args.classes),
         batch_size=args.batch_size,
@@ -63,7 +62,12 @@ def main():
         callbacks=callbacks,
         verbose=1,
     )
+    selection = restore_selection(model, checkpoint_path, history)
     score = model.evaluate(add_channel(x_test), to_categorical(y_test, args.classes), verbose=1)
+    model.save(args.output)
+    write_training_record(args.output, config=args, selection=selection,
+                          splits=(x_train,y_train,x_valid,y_valid,x_test,y_test),
+                          metrics={"test_loss":float(score[0]),"open_world_accuracy":float(score[1])}, model=model)
     print({"test_loss": float(score[0]), "open_world_accuracy": float(score[1])})
 
 

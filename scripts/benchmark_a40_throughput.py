@@ -485,6 +485,8 @@ def parse_args():
 def main() -> None:
     global BASELINE_ROOT
     args = parse_args()
+    if args.method == "MSFFAT" and args.msffat_backend != "tensorflow":
+        raise ValueError("Aligned MSFFAT v3 is implemented in TensorFlow; the legacy torch proxy is not a v2 benchmark")
     BASELINE_ROOT = args.baseline_root.resolve() if args.baseline_root else None
     if args.method == "MSFFAT" and args.msffat_backend == "tensorflow":
         row = run_tf(args)

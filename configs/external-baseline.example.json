@@ -1,0 +1,15 @@
+{
+  "method": "REPLACE_WITH_ORIGINAL_METHOD",
+  "implementation_url": "REPLACE_WITH_ORIGINAL_RELEASE_URL",
+  "revision": "REPLACE_WITH_COMMIT_OR_RELEASE_HASH",
+  "full_configuration": {
+    "initial_training_config": "REPLACE_WITH_COMPLETE_FROZEN_CONFIGURATION",
+    "input_representation": "REPLACE_WITH_ORIGINAL_PREPROCESSING_DESCRIPTION"
+  },
+  "checkpoint": "original-complete-model.keras",
+  "initial_split_root": "original-day0-run",
+  "class_order": [],
+  "from_logits": false,
+  "head_layers": [],
+  "partial_layers": []
+}

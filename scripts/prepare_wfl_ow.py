@@ -8,6 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
+from msffat.data import pad_or_truncate
+from msffat.baseline_adapters import sha256
+
 DEFAULT_SHOTS = (5, 10, 20, 50)
 UNMONITORED_LABEL = 95
 
@@ -35,7 +38,7 @@ def write_direction_array(source, destination, length, chunk_size, indices=None)
     out = np.lib.format.open_memmap(destination, mode="w+", dtype="float32", shape=(len(source), length))
     for start in range(0, len(source), chunk_size):
         stop = min(start + chunk_size, len(source))
-        out[start:stop] = np.sign(source[start:stop, :length]).astype("float32", copy=False)
+        out[start:stop] = pad_or_truncate(source[start:stop],length)
     out.flush()
     del out
 
@@ -44,7 +47,11 @@ def main():
     args = parse_args()
     source_root = Path(args.dataset_dir).resolve()
     output_root = Path(args.output_dir).resolve()
+    if output_root.exists() and any(output_root.iterdir()):
+        raise FileExistsError("Use a new empty cache directory")
     output_root.mkdir(parents=True, exist_ok=True)
+    if args.length < 1 or args.chunk_size < 1:
+        raise ValueError("length/chunk-size must be positive")
     train = np.load(source_root / "train.npz")
     x_train = train["X"]
     y_train = np.asarray(train["y"], dtype="int64")
@@ -59,13 +66,22 @@ def main():
         ordered[label] = indices
     unmonitored = np.flatnonzero(y_train == UNMONITORED_LABEL)
     rng.shuffle(unmonitored)
+    if any(shot < 1 for shot in args.shots) or args.unmonitored_shots is not None and args.unmonitored_shots < -1:
+        raise ValueError("Invalid shot budget")
+    if args.unmonitored_shots == 0:
+        raise ValueError("K+1 training requires an unmonitored class")
     for shots in args.shots:
+        if any(len(ordered[label]) < shots for label in ordered):
+            raise ValueError("Insufficient monitored examples for requested budget")
         monitored = np.concatenate([ordered[label][:shots] for label in range(UNMONITORED_LABEL)])
         unmonitored_count = shots if args.unmonitored_shots == -1 else args.unmonitored_shots
         unmonitored_selected = unmonitored if unmonitored_count is None else unmonitored[:unmonitored_count]
+        if unmonitored_count is not None and len(unmonitored_selected) != unmonitored_count:
+            raise ValueError("Insufficient unmonitored examples for requested budget")
         selected = np.concatenate([monitored, unmonitored_selected])
         write_direction_array(x_train, output_root / f"train_{shots}_X.npy", args.length, args.chunk_size, selected)
         np.save(output_root / f"train_{shots}_y.npy", y_train[selected])
+        np.save(output_root / f"train_{shots}_indices.npy",selected)
     del x_train
     train.close()
     sizes = {}
@@ -90,6 +106,8 @@ def main():
         },
         "valid_size": sizes["valid"], "test_size": sizes["test"],
     }
+    metadata["source_sha256"] = {f"{part}.npz":sha256(source_root/f"{part}.npz") for part in ("train","valid","test")}
+    metadata["cache_sha256"] = {p.name:sha256(p) for p in output_root.glob("*.npy")}
     (output_root / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(json.dumps(metadata, indent=2))
 

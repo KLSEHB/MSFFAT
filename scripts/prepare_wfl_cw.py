@@ -8,6 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
+from msffat.data import pad_or_truncate
+from msffat.baseline_adapters import sha256
+
 
 SHOTS = (5, 10, 20, 50)
 
@@ -30,7 +33,7 @@ def write_direction_array(source, destination: Path, length: int, chunk_size: in
     )
     for start in range(0, source.shape[0], chunk_size):
         stop = min(start + chunk_size, source.shape[0])
-        out[start:stop] = np.sign(source[start:stop, :length]).astype("float32", copy=False)
+        out[start:stop] = pad_or_truncate(source[start:stop],length)
     out.flush()
     del out
 
@@ -39,7 +42,11 @@ def main():
     args = parse_args()
     source_root = Path(args.dataset_dir).resolve()
     output_root = Path(args.output_dir).resolve()
+    if output_root.exists() and any(output_root.iterdir()):
+        raise FileExistsError("Use a new empty cache directory")
     output_root.mkdir(parents=True, exist_ok=True)
+    if args.length < 1 or args.chunk_size < 1:
+        raise ValueError("length/chunk-size must be positive")
 
     train = np.load(source_root / "train.npz")
     x_train = train["X"]
@@ -64,6 +71,7 @@ def main():
             x_train, output_root / f"train_{shots}_X.npy", args.length, args.chunk_size, selected
         )
         np.save(output_root / f"train_{shots}_y.npy", y_train[selected])
+        np.save(output_root / f"train_{shots}_indices.npy",selected)
     del x_train
     train.close()
 
@@ -89,6 +97,8 @@ def main():
         "train_sizes": {str(shots): int(shots * len(labels)) for shots in SHOTS},
         **{f"{name}_size": size for name, size in split_sizes.items()},
     }
+    metadata["source_sha256"] = {f"{part}.npz":sha256(source_root/f"{part}.npz") for part in ("train","valid","test")}
+    metadata["cache_sha256"] = {p.name:sha256(p) for p in output_root.glob("*.npy")}
     (output_root / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(json.dumps(metadata, indent=2))
 

@@ -23,7 +23,6 @@ SPECS = {
     "AWF-CNN": ("AWF.py", "AWF", (1, 3000)),
     "AWF-LSTM": (None, "AWFLSTM", (1, 150)),
     "AWF-SDAE": (None, "AWFSDAE", (1, 5000)),
-    "RF": ("RF.py", "RF", (1, 2, 1800)),
     "NetCLR": ("NetCLR.py", "NetCLR", (1, 5000)),
     "TF": ("TF.py", "TF", (1, 5000)),
     "DF": ("DF.py", "DF", (1, 5000)),

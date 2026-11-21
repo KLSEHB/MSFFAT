@@ -33,3 +33,6 @@ datasets/
 .DS_Store
 Thumbs.db
 
+# Alignment validation and result outputs
+.venv*/
+results/

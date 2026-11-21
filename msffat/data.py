@@ -29,26 +29,41 @@ def resolve_data_root(data_root: Optional[str] = None) -> Path:
 
 
 def pad_or_truncate(sequences, maxlen: int = 5000, dtype="float32") -> np.ndarray:
+    """Convert signed traffic values to directions; keep the first maxlen cells."""
+    if maxlen < 1:
+        raise ValueError("maxlen must be positive")
     out = np.zeros((len(sequences), maxlen), dtype=dtype)
     for i, seq in enumerate(sequences):
         arr = np.asarray(seq, dtype=dtype)[:maxlen]
-        out[i, : len(arr)] = arr
+        if arr.ndim != 1 or not np.isfinite(arr).all():
+            raise ValueError("Expected finite one-dimensional signed cell sequences")
+        out[i, : len(arr)] = np.sign(arr)
     return out
 
 
 def add_channel(x: np.ndarray) -> np.ndarray:
-    return np.asarray(x, dtype="float32")[:, :, np.newaxis]
+    x = np.asarray(x, dtype="float32")
+    if not np.isfinite(x).all() or not np.isin(x,[-1,0,1]).all():
+        raise ValueError("Native model input must contain only finite direction symbols -1,0,+1")
+    if x.ndim == 2:
+        return x[..., np.newaxis]
+    if x.ndim == 3 and x.shape[-1] == 1:
+        return x
+    raise ValueError("Expected (N,T) or (N,T,1) direction sequences")
 
 
 def sample_per_label(x: np.ndarray, y: np.ndarray, samples: Optional[int], seed: int = 42):
     if samples is None:
         return x, y
+    if samples < 1:
+        raise ValueError("samples must be positive")
     rng = np.random.default_rng(seed)
     selected = []
     for label in np.unique(y):
         idx = np.flatnonzero(y == label)
-        if len(idx) > samples:
-            idx = rng.choice(idx, size=samples, replace=False)
+        if len(idx) < samples:
+            raise ValueError(f"Class {label} has fewer than {samples} samples")
+        idx = rng.choice(idx, size=samples, replace=False)
         selected.append(idx)
     selected = np.concatenate(selected)
     selected.sort()
@@ -75,6 +90,8 @@ def load_df_closed_world(
     data_root: Optional[str] = None,
     defense: str = "NoDef",
     samples: Optional[int] = None,
+    seed: int = 42,
+    maxlen: int = 5000,
 ) -> ArraySplit:
     root = resolve_data_root(data_root) / "df" / "ClosedWorld" / defense
     if defense == "NoDef":
@@ -88,22 +105,22 @@ def load_df_closed_world(
 
     x_train = _load_pickle(root / f"X_train_{suffix}.pkl")
     y_train = _load_pickle(root / f"y_train_{suffix}.pkl")
-    x_train, y_train = sample_per_label(x_train, y_train, samples)
+    x_train, y_train = sample_per_label(x_train, y_train, samples, seed=seed)
     x_valid = _load_pickle(root / f"X_valid_{suffix}.pkl")
     y_valid = _load_pickle(root / f"y_valid_{suffix}.pkl")
     x_test = _load_pickle(root / f"X_test_{suffix}.pkl")
     y_test = _load_pickle(root / f"y_test_{suffix}.pkl")
-    return x_train, y_train, x_valid, y_valid, x_test, y_test
+    return pad_or_truncate(x_train, maxlen), y_train, pad_or_truncate(x_valid, maxlen), y_valid, pad_or_truncate(x_test, maxlen), y_test
 
 
-def load_df_open_world_training(data_root: Optional[str] = None, samples: Optional[int] = None):
+def load_df_open_world_training(data_root: Optional[str] = None, samples: Optional[int] = None, seed: int = 42, maxlen: int = 5000):
     root = resolve_data_root(data_root) / "df" / "OpenWorld" / "NoDef"
     x_train = _load_pickle(root / "X_train_NoDef.pkl")
     y_train = _load_pickle(root / "y_train_NoDef.pkl")
-    x_train, y_train = sample_per_label(x_train, y_train, samples)
+    x_train, y_train = sample_per_label(x_train, y_train, samples, seed=seed)
     x_valid = _load_pickle(root / "X_valid_NoDef.pkl")
     y_valid = _load_pickle(root / "y_valid_NoDef.pkl")
-    return x_train, y_train, x_valid, y_valid
+    return pad_or_truncate(x_train,maxlen), y_train, pad_or_truncate(x_valid,maxlen), y_valid
 
 
 def load_df_open_world_evaluation(data_root: Optional[str] = None):
@@ -125,6 +142,7 @@ def load_awf_cw(
     part: str = "200",
     traces: Optional[int] = 100,
     maxlen: int = 5000,
+    seed: int = 42,
 ) -> ArraySplit:
     path = resolve_data_root(data_root) / "dlwf" / f"tor_{part}w_2500tr.npz"
     npz = np.load(path, allow_pickle=True)
@@ -148,7 +166,7 @@ def load_awf_cw(
 
     x = pad_or_truncate(filtered_x, maxlen=maxlen)
     y = np.asarray(filtered_y, dtype="int64")
-    return split_dataset(x, y)
+    return split_dataset(x, y, seed=seed)
 
 
 def load_awf_time_eval(data_root: Optional[str] = None, suffix: str = "6w", maxlen: int = 5000):
@@ -172,27 +190,10 @@ def load_awf_time_refresh(
     maxlen: int = 5000,
     seed: int = 42,
 ):
-    x, y = load_awf_time_eval(data_root=data_root, suffix=suffix, maxlen=maxlen)
-    df = pd.DataFrame(x)
-    df["label"] = y
-    train_x, train_y, val_x, val_y = [], [], [], []
-    rng = np.random.default_rng(seed)
-    for label in sorted(np.unique(y)):
-        group = df[df["label"] == label]
-        n = min(len(group), traces * 2)
-        sampled = group.iloc[rng.choice(len(group), size=n, replace=False)]
-        values = sampled.drop(columns=["label"]).to_numpy(dtype="float32")
-        labels = sampled["label"].to_numpy(dtype="int64")
-        train_x.append(values[::2])
-        train_y.append(labels[::2])
-        val_x.append(values[1::2])
-        val_y.append(labels[1::2])
-    return (
-        np.concatenate(train_x),
-        np.concatenate(train_y),
-        np.concatenate(val_x),
-        np.concatenate(val_y),
-    )
+    """Exactly traces refresh samples/site; empty validation arrays for compatibility."""
+    x_train, y_train, x_valid, y_valid, _, _ = load_awf_time_refresh_and_heldout(
+        data_root, suffix, traces, maxlen, seed)
+    return x_train, y_train, x_valid, y_valid
 
 
 def load_awf_time_refresh_and_heldout(
@@ -202,37 +203,34 @@ def load_awf_time_refresh_and_heldout(
     maxlen: int = 5000,
     seed: int = 42,
 ):
-    """Split an AWF-Time interval into refresh and held-out test traces.
-
-    For each monitored site, up to ``2 * traces`` samples are selected for the
-    refresh batch: alternating samples form train and validation sets.  All
-    non-selected traces remain in the held-out test set.
-    """
+    """Exactly traces refresh samples/site; no additional validation labels."""
     x, y = load_awf_time_eval(data_root=data_root, suffix=suffix, maxlen=maxlen)
-    rng = np.random.default_rng(seed)
-    train_idx, val_idx, refresh_idx = [], [], []
-    all_idx = np.arange(len(y))
-    for label in sorted(np.unique(y)):
-        idx = np.flatnonzero(y == label)
-        n = min(len(idx), traces * 2)
-        chosen = rng.choice(idx, size=n, replace=False)
-        chosen.sort()
-        train_idx.extend(chosen[::2])
-        val_idx.extend(chosen[1::2])
-        refresh_idx.extend(chosen)
-    refresh_idx = np.asarray(refresh_idx, dtype=int)
-    heldout_idx = np.setdiff1d(all_idx, refresh_idx, assume_unique=False)
-    train_idx = np.asarray(train_idx, dtype=int)
-    val_idx = np.asarray(val_idx, dtype=int)
-    return x[train_idx], y[train_idx], x[val_idx], y[val_idx], x[heldout_idx], y[heldout_idx]
+    parts = split_time_indices(y, traces=traces, n_probe=0, seed=seed)
+    idx, test = parts["refresh"], parts["remainder"]
+    return x[idx], y[idx], x[:0], y[:0], x[test], y[test]
 
 
-def load_ares_ktab(data_root: Optional[str] = None, k: int = 2) -> ArraySplit:
+def split_time_indices(y, *, traces: int = 2, n_probe: int = 5, seed: int = 2024):
+    """Balanced, disjoint probe/refresh partitions; all other traces are held out."""
+    from .deployment import stratified_indices
+    if traces < 1 or n_probe < 0:
+        raise ValueError("Require traces >= 1 and n_probe >= 0")
+    labels, counts = np.unique(y, return_counts=True)
+    if not len(labels) or counts.min() <= traces + n_probe:
+        raise ValueError("Each site needs probe + refresh + at least one test trace")
+    parts = stratified_indices(np.asarray(y), labels.tolist(),
+                               {"probe": n_probe, "refresh": traces}, seed=seed)
+    used = np.concatenate(list(parts.values()))
+    parts["remainder"] = np.setdiff1d(np.arange(len(y)), used)
+    return parts
+
+
+def load_ares_ktab(data_root: Optional[str] = None, k: int = 2, maxlen: int = 5000) -> ArraySplit:
     root = resolve_data_root(data_root) / f"{k}tab"
     train = np.load(root / "train.npz", allow_pickle=True)
     valid = np.load(root / "valid.npz", allow_pickle=True)
     test = np.load(root / "test.npz", allow_pickle=True)
-    out = (train["X"], train["y"], valid["X"], valid["y"], test["X"], test["y"])
+    out = (pad_or_truncate(train["X"], maxlen), train["y"], pad_or_truncate(valid["X"], maxlen), valid["y"], pad_or_truncate(test["X"], maxlen), test["y"])
     train.close()
     valid.close()
     test.close()

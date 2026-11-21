@@ -1,10 +1,11 @@
-"""Print or execute common MSFFAT experiment commands."""
+"""Individual-task examples. The paired paper matrix is run_paper_experiments.py."""
 
 from __future__ import annotations
 
 import argparse
 import shlex
 import subprocess
+import sys
 
 
 def command_to_string(parts):
@@ -48,17 +49,14 @@ def build_commands(data_root: str):
         "python", "scripts/simulate_awf_time_deployment.py",
         "--data-root", data_root,
         "--output-root", "results/awf-time-deployment",
-        "--resume-model", "models/day0.keras",
-        "--resume-from-epoch", 0,
-        "--resume-epochs", 0,
         "--n-probe", 5,
-        "--m-refresh", 4,
-        "--detector-mode", "probe_only",
-        "--detector-probe-drop-pp", 2,
+        "--m-refresh", 2,
+        "--detector-mode", "joint_dynamic",
+        "--q", 0.04,
+        "--w-pp", 2,
+        "--e", 0.005,
         "--fixed-k-pp", 2,
-        "--atf-train-scope", "attention_head",
-        "--atf-deterministic-backbone",
-        "--skip-tuning",
+        "--atf-train-scope", "attention",
     ])
 
     for tabs in [2, 3, 4, 5]:
@@ -70,7 +68,7 @@ def build_commands(data_root: str):
             "--output", f"models/msffat_{tabs}tab.hdf5",
         ])
 
-    return commands
+    return [[sys.executable,*command[1:]] for command in commands]
 
 
 def parse_args():

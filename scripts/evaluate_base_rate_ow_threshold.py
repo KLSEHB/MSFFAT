@@ -9,16 +9,18 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.metrics import average_precision_score, precision_recall_fscore_support, roc_auc_score
+from msffat.operational import max_f1_threshold
+from msffat.baseline_adapters import sha256
 
 
 METHOD_ORDER = (
     "AWF", "AWF-LSTM", "AWF-SDAE", "DF", "TikTok", "VarCNN", "NetCLR",
-    "RF", "TF", "ARES", "TMWF", "MSFFAT",
+    "TF", "ARES", "TMWF", "MSFFAT",
 )
 DISPLAY = {
     "AWF": "AWF", "AWF-LSTM": "AWF-LSTM", "AWF-SDAE": "AWF-SDAE",
     "DF": "DF", "TikTok": "Tik-Tok", "VarCNN": "Var-CNN", "NetCLR": "NetCLR",
-    "RF": "RF", "TF": "TF", "ARES": "ARES", "TMWF": "TMWF", "MSFFAT": "MSFFAT",
+    "TF": "TF", "ARES": "ARES", "TMWF": "TMWF", "MSFFAT": "MSFFAT",
 }
 BASE_RATES = (0.10, 0.01)
 UNMONITORED_LABEL = 95
@@ -52,23 +54,7 @@ def positive_score(probs):
 
 
 def select_max_f1_threshold(y_true, scores):
-    y = (y_true < UNMONITORED_LABEL).astype(bool)
-    candidates = np.unique(scores)
-    candidates = np.concatenate(([np.nextafter(0.0, -1.0)], candidates, [np.nextafter(1.0, 2.0)]))
-    best = {"threshold": 0.5, "f1": -1.0, "precision": 0.0, "recall": 0.0}
-    for threshold in candidates:
-        pred = scores >= threshold
-        precision, recall, f1, _ = precision_recall_fscore_support(
-            y.astype(int), pred.astype(int), average="binary", zero_division=0
-        )
-        if f1 > best["f1"] or (np.isclose(f1, best["f1"]) and threshold > best["threshold"]):
-            best = {
-                "threshold": float(threshold),
-                "f1": float(f1),
-                "precision": float(precision),
-                "recall": float(recall),
-            }
-    return best
+    return max_f1_threshold(np.asarray(y_true)<UNMONITORED_LABEL,scores)
 
 
 def compute_metrics(y_true, probs, indices, threshold):
@@ -130,6 +116,8 @@ def main():
     args = parse_args()
     pred_root = Path(args.pred_root).resolve()
     output_dir = Path(args.output_dir).resolve()
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError("Use a new empty metric output directory")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ref_valid_y = None
@@ -194,6 +182,9 @@ def main():
         writer.writerows(csv_rows)
 
     payload = {
+        "result_kind":"measured_operational_metrics",
+        "prediction_sha256":{f"{method}/{name}":sha256(Path(args.pred_root)/method/name)
+                             for method in args.methods for name in ("valid_probs.npy","valid_y.npy","test_probs.npy","test_y.npy")},
         "seed": args.seed,
         "threshold_policy": "Max-F1 threshold on validation set; ties choose higher threshold",
         "indices": index_metadata,

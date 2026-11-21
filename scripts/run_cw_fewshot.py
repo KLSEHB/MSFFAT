@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--require-gpu", action="store_true")
-    parser.add_argument("--early-stopping-start-epoch", type=int, default=10)
+    parser.add_argument("--early-stopping-start-epoch", type=int, default=0)
     return parser.parse_args()
 
 
@@ -35,12 +35,8 @@ def main():
         run_dir = output_root / f"{shots}shot"
         run_dir.mkdir(parents=True, exist_ok=True)
         metrics = run_dir / "metrics.json"
-        if metrics.exists():
-            existing = json.loads(metrics.read_text())
-            if existing.get("status") == "complete":
-                print(f"Skipping completed {shots}-shot run")
-                rows.append(existing)
-                continue
+        if any(run_dir.iterdir()):
+            raise FileExistsError("Use a fresh output root; earlier metrics/checkpoints cannot be reused implicitly")
         command = [
             sys.executable,
             str(script),
